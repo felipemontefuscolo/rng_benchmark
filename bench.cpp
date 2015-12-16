@@ -26,14 +26,31 @@
 #include <trng/bernoulli_dist.hpp>
 
 #include "options.hpp"
+#include "profiler.hpp"
+
+#include <fstream>
 
 using std::cout;
 using std::endl;
 using std::setprecision;
 
-unsigned long seed = 5489u;
-size_t n_samples = 1000;
 int set_w = 30;
+
+Parameters pars;
+
+// some sugar syntax
+#define TEST        pars.test_reproducibility
+#define n_samples   pars.num_samples
+#define seed        pars.random_seed
+
+int get_num_threads() {
+  int n; 
+#pragma omp parallel
+#pragma omp single
+  n = omp_get_num_threads();
+  return n;
+}
+
 
 enum Dist_e {
 
@@ -54,13 +71,13 @@ enum Dist_e {
 template<class Dist_t, Dist_e>
 struct Params;
 
-template<class Dist_t> struct Params<Dist_t, UNIFORM    > { static Dist_t createDist() { return Dist_t(0.,1.); }  }; 
-template<class Dist_t> struct Params<Dist_t, NORMAL     > { static Dist_t createDist() { return Dist_t(0.,1.); }  }; 
-template<class Dist_t> struct Params<Dist_t, BETA       > { static Dist_t createDist() { return Dist_t(1.,2.); }  }; 
-template<class Dist_t> struct Params<Dist_t, GAMMA      > { static Dist_t createDist() { return Dist_t(1.,2.); }  }; 
-template<class Dist_t> struct Params<Dist_t, EXPONENTIAL> { static Dist_t createDist() { return Dist_t(1.  ); }  }; 
-template<class Dist_t> struct Params<Dist_t, POISSON    > { static Dist_t createDist() { return Dist_t(4  ); }  }; 
-template<class Dist_t> struct Params<Dist_t, BERNOULLI  > { static Dist_t createDist() { return Dist_t(0.5); }  }; 
+template<class Dist_t> struct Params<Dist_t, UNIFORM    > { static Dist_t createDist() { return Dist_t(get<0>(pars.uniform_params),get<1>(pars.uniform_params)); }  }; 
+template<class Dist_t> struct Params<Dist_t, NORMAL     > { static Dist_t createDist() { return Dist_t(get<0>(pars.normal_params),get<1>(pars.normal_params)); }  }; 
+template<class Dist_t> struct Params<Dist_t, BETA       > { static Dist_t createDist() { return Dist_t(get<0>(pars.beta_params),get<1>(pars.beta_params)); }  }; 
+template<class Dist_t> struct Params<Dist_t, GAMMA      > { static Dist_t createDist() { return Dist_t(get<0>(pars.gamma_params),get<1>(pars.gamma_params)); }  }; 
+template<class Dist_t> struct Params<Dist_t, EXPONENTIAL> { static Dist_t createDist() { return Dist_t(pars.exponential_param); }  }; 
+template<class Dist_t> struct Params<Dist_t, POISSON    > { static Dist_t createDist() { return Dist_t(pars.poisson_param); }  }; 
+template<class Dist_t> struct Params<Dist_t, BERNOULLI  > { static Dist_t createDist() { return Dist_t(pars.bernoulli_param); }  }; 
 
 template<> struct Params<trng::bernoulli_dist<double>, BERNOULLI  >
                   { static trng::bernoulli_dist<double> createDist() { return trng::bernoulli_dist<double>(0.5, 0, 1); }  }; 
@@ -78,12 +95,17 @@ void discard(E& e, D& d, size_t n) {
 template<class Dist_t, Dist_e dist_e >
 double test_trng_yarn2() {
 
-  double start = omp_get_wtime();
+  vector<double> nums;
+  bool const test = pars.test_reproducibility && get_num_threads()>1;
+
+  if (test)
+    nums.resize(n_samples);
 
   #pragma omp parallel
   {
     size_t size = omp_get_num_threads();     // get total number of processes
     size_t rank = omp_get_thread_num();      // get rank of current process
+    Profiler::start(rank);
     trng::yarn2 r(seed);
 
     // split PRN sequences by leapfrog method
@@ -93,13 +115,35 @@ double test_trng_yarn2() {
     
     for (size_t i = rank; i < n_samples; i+=size) {
        auto x = u(r);
+       if (test)
+         nums[i] = x;
      }
+     Profiler::stop(rank);
   }
 
-  double end = omp_get_wtime();
   cout << std::fixed << std::showpoint;
-  cout << setprecision(4) << std::left << std::setw(set_w) <<  __func__ <<  (end-start) << "\n";
-  return end-start;
+  cout <<                    std::left << std::setw(set_w) <<  __func__;
+  cout << setprecision(4) << std::left << std::setw(set_w) << Profiler::total_real_time();
+  cout << setprecision(4) << std::left << std::setw(set_w) << Profiler::total_mflops();
+
+  // compare to single-threaded
+  if (test) {
+    bool failed = false;   
+ 
+    trng::yarn2 r(seed);
+    Dist_t u ( Params<Dist_t,dist_e>::createDist() ); 
+    for (size_t i = 0; i < n_samples; i++) {
+       auto x = u(r);
+       if (nums[i] != x)
+         failed = true;
+     }
+    
+     cout  << (failed ? "FAILED" : "PASSED") << endl;
+  }
+  else
+    cout << endl;
+
+  return Profiler::total_real_time();
 }
 
 // *****************************************************************************************
@@ -109,26 +153,54 @@ double test_trng_yarn2() {
 template<class Dist_t, Dist_e dist_e >
 double test_pcg32() {
 
-  double start = omp_get_wtime();
+  vector<double> nums;
+  bool const test = pars.test_reproducibility && get_num_threads()>1;
+
+  if (test)
+    nums.resize(n_samples);
 
   #pragma omp parallel
   {
     size_t size = omp_get_num_threads();     // get total number of processes
     size_t rank = omp_get_thread_num();      // get rank of current process
-    pcg32 r(seed, rank);
-
-    Dist_t u ( Params<Dist_t,dist_e>::createDist() );  // random number distribution
+    Profiler::start(rank);
     
     #pragma omp for 
     for (size_t i=0; i<n_samples; i++) {
+       pcg32 r(seed, i);
+       Dist_t u ( Params<Dist_t,dist_e>::createDist() );  // random number distribution
        auto x = u(r);
+       if (test)
+         nums[i] = x;
      }
+    Profiler::stop(rank);
   }
 
-  double end = omp_get_wtime();
   cout << std::fixed << std::showpoint;
-  cout << std::left << std::setw(set_w) <<  __func__ <<  (end-start) << "\n";
-  return end-start;
+  cout <<                    std::left << std::setw(set_w) <<  __func__;
+  cout << setprecision(4) << std::left << std::setw(set_w) << Profiler::total_real_time();
+  cout << setprecision(4) << std::left << std::setw(set_w) << Profiler::total_mflops();
+
+   // compare to single-threaded
+  if (test) {
+    bool failed = false;   
+     
+    for (size_t i = 0; i < n_samples; i++) {
+       pcg32 r(seed, i);
+       Dist_t u ( Params<Dist_t,dist_e>::createDist() );
+       auto x = u(r);
+       if (nums[i] != x)
+         failed = true;
+     }
+    
+     cout  << (failed ? "FAILED" : "PASSED") << endl;
+  }
+  else
+    cout << endl;
+
+ 
+
+  return Profiler::total_real_time();
 }
 
 // *****************************************************************************************
@@ -138,12 +210,17 @@ double test_pcg32() {
 template<class Dist_t, Dist_e dist_e >
 double test_std_mt19937_leap() {
 
-  double start = omp_get_wtime();
+  vector<double> nums;
+  bool const test = pars.test_reproducibility && get_num_threads()>1;
+
+  if (test)
+    nums.resize(n_samples);
 
   #pragma omp parallel
   {
     size_t size = omp_get_num_threads();     // get total number of processes
     size_t rank = omp_get_thread_num();      // get rank of current process
+    Profiler::start(rank);
     std::mt19937 r(seed);
    
     Dist_t u ( Params<Dist_t,dist_e>::createDist() );  // random number distribution
@@ -153,13 +230,35 @@ double test_std_mt19937_leap() {
     for (size_t i = rank; i < n_samples; i+=size) {
        auto x = u(r);
        discard(r, u, size-1);
+       if (test)
+         nums[i] = x;
      }
+     Profiler::stop(rank);
   }
 
-  double end = omp_get_wtime();
   cout << std::fixed << std::showpoint;
-  cout << setprecision(4) << std::left << std::setw(set_w) <<  __func__ <<  (end-start) << "\n";
-  return end-start;
+  cout <<                    std::left << std::setw(set_w) <<  __func__;
+  cout << setprecision(4) << std::left << std::setw(set_w) << Profiler::total_real_time();
+  cout << setprecision(4) << std::left << std::setw(set_w) << Profiler::total_mflops();
+
+   // compare to single-threaded
+  if (test) {
+    bool failed = false;   
+    
+    std::mt19937 r(seed);
+    Dist_t u ( Params<Dist_t,dist_e>::createDist() );  // random number distribution
+    for (size_t i = 0; i < n_samples; i++) {
+       auto x = u(r);
+       if (nums[i] != x)
+         failed = true;
+     }
+    
+     cout  << (failed ? "FAILED" : "PASSED") << endl;
+  }
+  else
+    cout << endl;
+
+  return Profiler::total_real_time();
 }
 
 // *****************************************************************************************
@@ -169,12 +268,17 @@ double test_std_mt19937_leap() {
 template<class Dist_t, Dist_e dist_e >
 double test_boost_mt19937_leap() {
 
-  double start = omp_get_wtime();
+  vector<double> nums;
+  bool const test = pars.test_reproducibility && get_num_threads()>1;
+
+  if (test)
+    nums.resize(n_samples);
 
   #pragma omp parallel
   {
     size_t size = omp_get_num_threads();     // get total number of processes
     size_t rank = omp_get_thread_num();      // get rank of current process
+    Profiler::start(rank);
     boost::mt19937 r(seed);
    
     Dist_t u ( Params<Dist_t,dist_e>::createDist() );  // random number distribution
@@ -184,88 +288,59 @@ double test_boost_mt19937_leap() {
     for (size_t i = rank; i < n_samples; i+=size) {
        auto x = u(r);
        discard(r, u, size-1);
+       if (test)
+         nums[i] = x;
      }
+     Profiler::stop(rank);
   }
 
-  double end = omp_get_wtime();
   cout << std::fixed << std::showpoint;
-  cout << setprecision(4) << std::left << std::setw(set_w) <<  __func__ <<  (end-start) << "\n";
-  return end-start;
-}
+  cout <<                    std::left << std::setw(set_w) <<  __func__;
+  cout << setprecision(4) << std::left << std::setw(set_w) << Profiler::total_real_time();
+  cout << setprecision(4) << std::left << std::setw(set_w) << Profiler::total_mflops();
 
-
-
-// *****************************************************************************************
-// -----------------------------------------------------------------------------------------
-// *****************************************************************************************
-
-template<class Dist_t, Dist_e dist_e >
-double test_std_mt19937_critical() {
-
-  double start = omp_get_wtime();
-  std::mt19937 r(seed);
-  Dist_t u ( Params<Dist_t,dist_e>::createDist() );  // random number distribution
-
-  #pragma omp parallel
-  {
-    size_t size = omp_get_num_threads();     // get total number of processes
-    size_t rank = omp_get_thread_num();      // get rank of current process
-
-    for (size_t i = rank; i < n_samples; i+=size) {
-       #pragma omp critical
+   // compare to single-threaded
+  if (test) {
+    bool failed = false;   
+    
+    std::mt19937 r(seed);
+    Dist_t u ( Params<Dist_t,dist_e>::createDist() );  // random number distribution
+    for (size_t i = 0; i < n_samples; i++) {
        auto x = u(r);
+       if (nums[i] != x)
+         failed = true;
      }
+    
+     cout  << (failed ? "FAILED" : "PASSED") << endl;
   }
+  else
+    cout << endl;
 
-  double end = omp_get_wtime();
-  cout << std::fixed << std::showpoint;
-  cout << setprecision(4) << std::left << std::setw(set_w) <<  __func__ <<  (end-start) << "\n";
-  return end-start;
+  return Profiler::total_real_time();
 }
 
-// *****************************************************************************************
-// -----------------------------------------------------------------------------------------
-// *****************************************************************************************
-
-template<class Dist_t, Dist_e dist_e >
-double test_boost_mt19937_critical() {
-
-  double start = omp_get_wtime();
-  boost::mt19937 r(seed);
-  Dist_t u ( Params<Dist_t,dist_e>::createDist() );  // random number distribution
-
-  #pragma omp parallel
-  {
-    size_t size = omp_get_num_threads();     // get total number of processes
-    size_t rank = omp_get_thread_num();      // get rank of current process
-
-    for (size_t i = rank; i < n_samples; i+=size) {
-       #pragma omp critical
-       auto x = u(r);
-     }
-  }
-
-  double end = omp_get_wtime();
-  cout << std::fixed << std::showpoint;
-  cout << setprecision(4) << std::left << std::setw(set_w) <<  __func__ <<  (end-start) << "\n";
-  return end-start;
-}
 
 
 
 // *****************************************************************************************
 // -----------------------------------------------------------------------------------------
 // *****************************************************************************************
+
 
 template<class Dist_t, Dist_e dist_e >
 double test_random123() {
 
-  double start = omp_get_wtime();
+  vector<double> nums;
+  bool const test = pars.test_reproducibility && get_num_threads()>1;
+
+  if (test)
+    nums.resize(n_samples);
 
   #pragma omp parallel
   {
     size_t size = omp_get_num_threads();     // get total number of processes
     size_t rank = omp_get_thread_num();      // get rank of current process
+    Profiler::start(rank);
     typedef boost::random::threefry<4, uint32_t> Prf;
     boost::random::counter_based_engine<uint32_t, Prf, 32> r(seed);
 
@@ -275,103 +350,133 @@ double test_random123() {
     for (size_t i = 0; i < n_samples; ++i) {
        r.restart({i, size_t(0), size_t(0)});
        auto x = u(r);
+       if (test)
+         nums[i] = x;
      }
+    Profiler::stop(rank);
   }
 
-  double end = omp_get_wtime();
   cout << std::fixed << std::showpoint;
-  cout << setprecision(4) << std::left << std::setw(set_w) <<  __func__ <<  (end-start) << "\n";
-  return end-start;
+  cout <<                    std::left << std::setw(set_w) <<  __func__;
+  cout << setprecision(4) << std::left << std::setw(set_w) << Profiler::total_real_time();
+  cout << setprecision(4) << std::left << std::setw(set_w) << Profiler::total_mflops();
+
+   // compare to single-threaded
+  if (test) {
+    bool failed = false;   
+    typedef boost::random::threefry<4, uint32_t> Prf;
+    boost::random::counter_based_engine<uint32_t, Prf, 32> r(seed);
+
+    Dist_t u ( Params<Dist_t,dist_e>::createDist() ); 
+    for (size_t i = 0; i < n_samples; i++) {
+       r.restart({i, size_t(0), size_t(0)});
+       auto x = u(r);
+       if (nums[i] != x)
+         failed = true;
+     }
+    
+     cout  << (failed ? "FAILED" : "PASSED") << endl;
+  }
+  else
+    cout << endl;
+
+  return Profiler::total_real_time();
 }
 
 
-
+template<class T>
+void print_to_file(vector<T>& v) {
+  
+}
 
 int main(int argc, char* argv[]) {
 
+  readParameters(pars, argc, argv);
+  pars.print_values();
 
-  cout.precision(5);
-  if (argc > 1) {
-    n_samples = std::stoul(std::string(argv[1]));
+  Profiler::initialize(1); 
+
+  for (auto n_threads : pars.num_threads) {
+
+    omp_set_num_threads(n_threads);
+
+    Profiler::change_num_threads(n_threads);
+
+    bool const test = pars.test_reproducibility && n_threads>1;
+
+    #pragma omp parallel
+    #pragma omp single
+    {
+      cout << "Running with  " << omp_get_num_threads() << " threads" << endl ;
+      cout << "-------------------------------------------------------------------------------------------------------------- " << endl ;
+    }
+    cout <<  std::left << std::setw(set_w) << " ";
+    cout <<  std::left << std::setw(set_w) << "Real time (s)";
+    cout <<  std::left << std::setw(set_w) << "MFLOP/s ";
+    if (test)
+      cout <<  std::left << std::setw(set_w) <<  "reproducibility test" << endl;
+    else
+      cout <<  endl;
+    
+ 
+ 
+    cout << "Uniform : " << "\n";
+    test_trng_yarn2             <trng::uniform_dist<double>, UNIFORM >(); 
+    test_pcg32                  <std::uniform_real_distribution<double>, UNIFORM>();
+    test_std_mt19937_leap       <std::uniform_real_distribution<double>, UNIFORM>();
+    test_boost_mt19937_leap     <boost::random::uniform_real_distribution<double>, UNIFORM>();
+    test_random123              <boost::random::uniform_real_distribution<double>, UNIFORM>();
+    cout << "\n";
+  
+    cout << "Normal : " << "\n";
+    test_trng_yarn2             <trng::normal_dist<double>, NORMAL >(); 
+    test_pcg32                  <std::normal_distribution<double>, NORMAL>();
+    test_std_mt19937_leap       <std::normal_distribution<double>, NORMAL>();
+    test_boost_mt19937_leap     <boost::random::normal_distribution<double>, NORMAL>();
+    test_random123              <boost::random::normal_distribution<double>, NORMAL>();
+    cout << "\n";
+  
+  //  cout << "Beta : " << "\n";
+  //  test_trng_yarn2             <trng::uniform_dist<double>, BETA >(); 
+  //  test_pcg32                  <std::uniform_real_distribution<double>, BETA>();
+  //  test_std_mt19937_leap       <std::uniform_real_distribution<double>, BETA>();
+  //  test_boost_mt19937_leap     <boost::random::uniform_real_distribution<double>, BETA>();
+  //  test_random123              <boost::random::uniform_real_distribution<double>, BETA>();
+  //  cout << "\n";
+  
+    cout << "Gamma : " << "\n";
+    test_trng_yarn2             <trng::gamma_dist<double>, GAMMA >(); 
+    test_pcg32                  <std::gamma_distribution<double>, GAMMA>();
+    test_std_mt19937_leap       <std::gamma_distribution<double>, GAMMA>();
+    test_boost_mt19937_leap     <boost::random::gamma_distribution<double>, GAMMA>();
+    test_random123              <boost::random::gamma_distribution<double>, GAMMA>();
+    cout << "\n";
+  
+    cout << "Exponential : " << "\n";
+    test_trng_yarn2             <trng::exponential_dist<double>, EXPONENTIAL >(); 
+    test_pcg32                  <std::exponential_distribution<double>, EXPONENTIAL>();
+    test_std_mt19937_leap       <std::exponential_distribution<double>, EXPONENTIAL>();
+    test_boost_mt19937_leap     <boost::random::exponential_distribution<double>, EXPONENTIAL>();
+    test_random123              <boost::random::exponential_distribution<double>, EXPONENTIAL>();
+    cout << "\n";
+  
+    cout << "Poisson : " << "\n";
+    test_trng_yarn2             <trng::poisson_dist, POISSON >(); 
+    test_pcg32                  <std::poisson_distribution<int>, POISSON>();
+    test_std_mt19937_leap       <std::poisson_distribution<int>, POISSON>();
+    test_boost_mt19937_leap     <boost::random::poisson_distribution<int>, POISSON>();
+    test_random123              <boost::random::poisson_distribution<int>, POISSON>();
+    cout << "\n";
+  
+    cout << "Bernoulli : " << "\n";
+    test_trng_yarn2             <trng::bernoulli_dist<double>, BERNOULLI >(); 
+    test_pcg32                  <std::bernoulli_distribution, BERNOULLI>();
+    test_std_mt19937_leap       <std::bernoulli_distribution, BERNOULLI>();
+    test_boost_mt19937_leap     <boost::random::bernoulli_distribution<double>, BERNOULLI>();
+    test_random123              <boost::random::bernoulli_distribution<double>, BERNOULLI>();
+    cout << "\n";
+
   }
-
-  #pragma omp parallel
-  #pragma omp single
-  {
-    cout << "Num of threads " << omp_get_num_threads() << endl;
-    cout << "Num of samples: " << n_samples << endl << endl;
-  }
-
-  cout << "Uniform : " << "\n";
-//  test_trng_yarn2             <trng::uniform_dist<double>, UNIFORM >(); 
-//  test_pcg32                  <std::uniform_real_distribution<double>, UNIFORM>();
-//  test_std_mt19937_leap       <std::uniform_real_distribution<double>, UNIFORM>();
-//  test_boost_mt19937_leap     <boost::random::uniform_real_distribution<double>, UNIFORM>();
-//  test_std_mt19937_critical   <std::uniform_real_distribution<double>, UNIFORM>();
-//  test_boost_mt19937_critical <boost::random::uniform_real_distribution<double>, UNIFORM>();
-  test_random123              <boost::random::uniform_real_distribution<double>, UNIFORM>();
-  cout << "\n";
-
-  cout << "Normal : " << "\n";
-//  test_trng_yarn2             <trng::normal_dist<double>, NORMAL >(); 
-//  test_pcg32                  <std::normal_distribution<double>, NORMAL>();
-//  test_std_mt19937_leap       <std::normal_distribution<double>, NORMAL>();
-//  test_boost_mt19937_leap     <boost::random::normal_distribution<double>, NORMAL>();
-//  test_std_mt19937_critical   <std::normal_distribution<double>, NORMAL>();
-//  test_boost_mt19937_critical <boost::random::normal_distribution<double>, NORMAL>();
-  test_random123              <boost::random::normal_distribution<double>, NORMAL>();
-  cout << "\n";
-
-//  cout << "Beta : " << "\n";
-//  test_trng_yarn2             <trng::uniform_dist<double>, BETA >(); 
-//  test_pcg32                  <std::uniform_real_distribution<double>, BETA>();
-//  test_std_mt19937_leap       <std::uniform_real_distribution<double>, BETA>();
-//  test_boost_mt19937_leap     <boost::random::uniform_real_distribution<double>, BETA>();
-//  test_std_mt19937_critical   <std::uniform_real_distribution<double>, BETA>();
-//  test_boost_mt19937_critical <boost::random::uniform_real_distribution<double>, BETA>();
-//  test_random123              <boost::random::uniform_real_distribution<double>, BETA>();
-//  cout << "\n";
-
-  cout << "Gamma : " << "\n";
-//  test_trng_yarn2             <trng::gamma_dist<double>, GAMMA >(); 
-//  test_pcg32                  <std::gamma_distribution<double>, GAMMA>();
-//  test_std_mt19937_leap       <std::gamma_distribution<double>, GAMMA>();
-//  test_boost_mt19937_leap     <boost::random::gamma_distribution<double>, GAMMA>();
-//  test_std_mt19937_critical   <std::gamma_distribution<double>, GAMMA>();
-//  test_boost_mt19937_critical <boost::random::gamma_distribution<double>, GAMMA>();
-  test_random123              <boost::random::gamma_distribution<double>, GAMMA>();
-  cout << "\n";
-
-  cout << "Exponential : " << "\n";
-//  test_trng_yarn2             <trng::exponential_dist<double>, EXPONENTIAL >(); 
-//  test_pcg32                  <std::exponential_distribution<double>, EXPONENTIAL>();
-//  test_std_mt19937_leap       <std::exponential_distribution<double>, EXPONENTIAL>();
-//  test_boost_mt19937_leap     <boost::random::exponential_distribution<double>, EXPONENTIAL>();
-//  test_std_mt19937_critical   <std::exponential_distribution<double>, EXPONENTIAL>();
-//  test_boost_mt19937_critical <boost::random::exponential_distribution<double>, EXPONENTIAL>();
-  test_random123              <boost::random::exponential_distribution<double>, EXPONENTIAL>();
-  cout << "\n";
-
-  cout << "Poisson : " << "\n";
-//  test_trng_yarn2             <trng::poisson_dist, POISSON >(); 
-//  test_pcg32                  <std::poisson_distribution<int>, POISSON>();
-//  test_std_mt19937_leap       <std::poisson_distribution<int>, POISSON>();
-//  test_boost_mt19937_leap     <boost::random::poisson_distribution<int>, POISSON>();
-//  test_std_mt19937_critical   <std::poisson_distribution<int>, POISSON>();
-//  test_boost_mt19937_critical <boost::random::poisson_distribution<int>, POISSON>();
-  test_random123              <boost::random::poisson_distribution<int>, POISSON>();
-  cout << "\n";
-
-  cout << "Bernoulli : " << "\n";
-//  test_trng_yarn2             <trng::bernoulli_dist<double>, BERNOULLI >(); 
-//  test_pcg32                  <std::bernoulli_distribution, BERNOULLI>();
-//  test_std_mt19937_leap       <std::bernoulli_distribution, BERNOULLI>();
-//  test_boost_mt19937_leap     <boost::random::bernoulli_distribution<double>, BERNOULLI>();
-//  test_std_mt19937_critical   <std::bernoulli_distribution, BERNOULLI>();
-//  test_boost_mt19937_critical <boost::random::bernoulli_distribution<double>, BERNOULLI>();
-  test_random123              <boost::random::bernoulli_distribution<double>, BERNOULLI>();
-  cout << "\n";
-
 
 }
 

@@ -43,9 +43,10 @@ struct Parameters {
 
   typedef tuple<double,double> pair_t;
 
-  size_t num_samples = 1000000 ;
+  bool test_reproducibility = false;
+  size_t num_samples = 2000000 ;
   vector<int> num_threads = vector<int>{1, 4, 8, 16, 32} ;
-  unsigned random_seed = 23948;
+  unsigned long random_seed = 23948u;
   pair_t uniform_params = pair_t{0., 1.0};
   pair_t normal_params = pair_t{0., 1.0};
   pair_t beta_params = pair_t{1.0, 2.0};
@@ -54,20 +55,21 @@ struct Parameters {
   int poisson_param = 4;
   double bernoulli_param = 0.5;
 
-  void printOptions() const {
+  void print_values() const {
 
     cout << "This code is running with the following options:\n\n";
 
-    cout << "  num_samples:       " <<  num_samples       << endl;   
-    cout << "  num_threads:       " <<  num_threads       << endl;   
-    cout << "  random_seed:       " <<  random_seed       << endl;  
-    cout << "  uniform_params:    " <<  uniform_params    << endl;    
-    cout << "  normal_params:     " <<  normal_params     << endl;      
-    cout << "  beta_params:       " <<  beta_params       << endl;  
-    cout << "  gamma_params:      " <<  gamma_params      << endl;  
-    cout << "  exponential_param: " <<  exponential_param << endl;  
-    cout << "  poisson_param:     " <<  poisson_param     << endl;  
-    cout << "  bernoulli_param:   " <<  bernoulli_param   << endl; 
+    cout << "  test_reproducibility:  " <<  test_reproducibility << endl;
+    cout << "  num_samples:           " <<  num_samples       << endl;   
+    cout << "  num_threads:           " <<  num_threads       << endl;   
+    cout << "  random_seed:           " <<  random_seed       << endl;  
+    cout << "  uniform_params:        " <<  uniform_params    << endl;    
+    cout << "  normal_params:         " <<  normal_params     << endl;      
+    cout << "  beta_params:           " <<  beta_params       << endl;  
+    cout << "  gamma_params:          " <<  gamma_params      << endl;  
+    cout << "  exponential_param:     " <<  exponential_param << endl;  
+    cout << "  poisson_param:         " <<  poisson_param     << endl;  
+    cout << "  bernoulli_param:       " <<  bernoulli_param   << endl; 
 
     cout << endl;
   }
@@ -124,7 +126,7 @@ int readParameters(Parameters &opt, int ac, char* av[]) {
         generic.add_options()
             ("version,v", "print version string")
             ("help", "produce help message")
-            ("config,c", po::value<string>(&config_file)->default_value("multiple_sources.cfg"),
+            ("config,c", po::value<string>(&config_file)->default_value("parameters.cfg"),
                   "name of a file of a configuration.")
             ;
     
@@ -134,9 +136,10 @@ int readParameters(Parameters &opt, int ac, char* av[]) {
         po::options_description config("Configuration");
         config.add_options()
             ("include-path,I",    po::value<vector<string>>()->composing(),  "include path")
+            ("test_reproducibility", po::value<bool       >(), "check if the result is thread independent (slow)")      
             ("num_samples",       po::value<size_t        >(), "number of random numbers generated")      
             ("num_threads",       po::value<VecT<int>     >()->multitoken(), "list of number of threads separated by space")        
-            ("random_seed",       po::value<unsigned      >(), "seed")           
+            ("random_seed",       po::value<unsigned long >(), "seed")           
             ("uniform_params",    po::value<TupleT<double>>()->multitoken(), "two floats separated by space")        
             ("normal_params",     po::value<TupleT<double>>()->multitoken(), "two floats separated by space")      
             ("beta_params",       po::value<TupleT<double>>()->multitoken(), "two floats separated by space")          
@@ -175,7 +178,7 @@ int readParameters(Parameters &opt, int ac, char* av[]) {
         if (!ifs)
         {
             cout << "can not open config file: " << config_file << "\n";
-            return 0;
+            throw;
         }
         else
         {
@@ -207,9 +210,10 @@ int readParameters(Parameters &opt, int ac, char* av[]) {
                  << vm["input-file"].as< vector<string> >() << "\n";
         }
 
-       if (vm.count("num_samples"      )) opt.num_samples       = vm["num_samples"      ].as< size_t        >();      
+       if (vm.count("test_reproducibility")) opt.test_reproducibility = vm["test_reproducibility"].as<bool>();      
+       if (vm.count("num_samples"      )) opt.num_samples       = vm["num_samples"      ].as< size_t        >();     
        if (vm.count("num_threads"      )) opt.num_threads       = vm["num_threads"      ].as< VecT<int>     >();     
-       if (vm.count("random_seed"      )) opt.random_seed       = vm["random_seed"      ].as< unsigned      >();     
+       if (vm.count("random_seed"      )) opt.random_seed       = vm["random_seed"      ].as< unsigned long >();     
        if (vm.count("uniform_params"   )) opt.uniform_params    = vm["uniform_params"   ].as< TupleT<double>>();      
        if (vm.count("normal_params"    )) opt.normal_params     = vm["normal_params"    ].as< TupleT<double>>();     
        if (vm.count("beta_params"      )) opt.beta_params       = vm["beta_params"      ].as< TupleT<double>>();   
@@ -225,7 +229,6 @@ int readParameters(Parameters &opt, int ac, char* av[]) {
         return 1;
     }    
 
-    opt.printOptions();
     return 0;
 }
 
