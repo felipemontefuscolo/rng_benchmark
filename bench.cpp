@@ -93,7 +93,7 @@ void discard(E& e, D& d, size_t n) {
 // *****************************************************************************************
 
 template<class Dist_t, Dist_e dist_e >
-double test_trng_yarn2() {
+vector<double> test_trng_yarn2() {
 
   vector<double> nums;
   bool const test = pars.test_reproducibility && get_num_threads()>1;
@@ -143,7 +143,7 @@ double test_trng_yarn2() {
   else
     cout << endl;
 
-  return Profiler::total_real_time();
+  return nums;
 }
 
 // *****************************************************************************************
@@ -151,7 +151,7 @@ double test_trng_yarn2() {
 // *****************************************************************************************
 
 template<class Dist_t, Dist_e dist_e >
-double test_pcg32() {
+vector<double> test_pcg32() {
 
   vector<double> nums;
   bool const test = pars.test_reproducibility && get_num_threads()>1;
@@ -200,7 +200,7 @@ double test_pcg32() {
 
  
 
-  return Profiler::total_real_time();
+  return nums;
 }
 
 // *****************************************************************************************
@@ -208,7 +208,7 @@ double test_pcg32() {
 // *****************************************************************************************
 
 template<class Dist_t, Dist_e dist_e >
-double test_std_mt19937_leap() {
+vector<double> test_std_mt19937_leap() {
 
   vector<double> nums;
   bool const test = pars.test_reproducibility && get_num_threads()>1;
@@ -258,7 +258,7 @@ double test_std_mt19937_leap() {
   else
     cout << endl;
 
-  return Profiler::total_real_time();
+  return nums;
 }
 
 // *****************************************************************************************
@@ -266,7 +266,7 @@ double test_std_mt19937_leap() {
 // *****************************************************************************************
 
 template<class Dist_t, Dist_e dist_e >
-double test_boost_mt19937_leap() {
+vector<double> test_boost_mt19937_leap() {
 
   vector<double> nums;
   bool const test = pars.test_reproducibility && get_num_threads()>1;
@@ -316,7 +316,7 @@ double test_boost_mt19937_leap() {
   else
     cout << endl;
 
-  return Profiler::total_real_time();
+  return nums;
 }
 
 
@@ -328,7 +328,7 @@ double test_boost_mt19937_leap() {
 
 
 template<class Dist_t, Dist_e dist_e >
-double test_random123() {
+vector<double> test_random123() {
 
   vector<double> nums;
   bool const test = pars.test_reproducibility && get_num_threads()>1;
@@ -380,13 +380,17 @@ double test_random123() {
   else
     cout << endl;
 
-  return Profiler::total_real_time();
+  return nums;
 }
 
 
 template<class T>
-void print_to_file(vector<T>& v) {
-  
+void print_to_file(vector<T> const& v, ofstream& f, bool print_me) {
+  if (!print_me)
+    return;
+  for (auto vv : v)
+    f << vv << " ";
+  f << endl;
 }
 
 int main(int argc, char* argv[]) {
@@ -395,6 +399,9 @@ int main(int argc, char* argv[]) {
   pars.print_values();
 
   Profiler::initialize(1); 
+
+  
+  int print_nums = false; 
 
   for (auto n_threads : pars.num_threads) {
 
@@ -417,24 +424,33 @@ int main(int argc, char* argv[]) {
       cout <<  std::left << std::setw(set_w) <<  "reproducibility test" << endl;
     else
       cout <<  endl;
-    
  
+    print_nums += test; 
+
+    bool p = print_nums == 1;
  
+    ofstream ff;
+
+    if (p) ff.open("Uniform.dat");
     cout << "Uniform : " << "\n";
-    test_trng_yarn2             <trng::uniform_dist<double>, UNIFORM >(); 
-    test_pcg32                  <std::uniform_real_distribution<double>, UNIFORM>();
-    test_std_mt19937_leap       <std::uniform_real_distribution<double>, UNIFORM>();
-    test_boost_mt19937_leap     <boost::random::uniform_real_distribution<double>, UNIFORM>();
-    test_random123              <boost::random::uniform_real_distribution<double>, UNIFORM>();
+    print_to_file( test_trng_yarn2             <trng::uniform_dist<double>, UNIFORM >()                      , ff, p);   
+    print_to_file( test_pcg32                  <std::uniform_real_distribution<double>, UNIFORM>()           , ff, p);
+    print_to_file( test_std_mt19937_leap       <std::uniform_real_distribution<double>, UNIFORM>()           , ff, p);
+    print_to_file( test_boost_mt19937_leap     <boost::random::uniform_real_distribution<double>, UNIFORM>() , ff, p);
+    print_to_file( test_random123              <boost::random::uniform_real_distribution<double>, UNIFORM>() , ff, p);
     cout << "\n";
+    if (p) ff.close();
+
   
+    if (p) ff.open("Normal.dat");
     cout << "Normal : " << "\n";
-    test_trng_yarn2             <trng::normal_dist<double>, NORMAL >(); 
-    test_pcg32                  <std::normal_distribution<double>, NORMAL>();
-    test_std_mt19937_leap       <std::normal_distribution<double>, NORMAL>();
-    test_boost_mt19937_leap     <boost::random::normal_distribution<double>, NORMAL>();
-    test_random123              <boost::random::normal_distribution<double>, NORMAL>();
+    print_to_file (test_trng_yarn2             <trng::normal_dist<double>, NORMAL >()                  , ff, p);       
+    print_to_file (test_pcg32                  <std::normal_distribution<double>, NORMAL>()            , ff, p);        
+    print_to_file (test_std_mt19937_leap       <std::normal_distribution<double>, NORMAL>()            , ff, p);      
+    print_to_file (test_boost_mt19937_leap     <boost::random::normal_distribution<double>, NORMAL>()  , ff, p);       
+    print_to_file (test_random123              <boost::random::normal_distribution<double>, NORMAL>()  , ff, p);      
     cout << "\n";
+    if (p) ff.close();
   
   //  cout << "Beta : " << "\n";
   //  test_trng_yarn2             <trng::uniform_dist<double>, BETA >(); 
@@ -444,37 +460,45 @@ int main(int argc, char* argv[]) {
   //  test_random123              <boost::random::uniform_real_distribution<double>, BETA>();
   //  cout << "\n";
   
+    if (p) ff.open("Gamma.dat");
     cout << "Gamma : " << "\n";
-    test_trng_yarn2             <trng::gamma_dist<double>, GAMMA >(); 
-    test_pcg32                  <std::gamma_distribution<double>, GAMMA>();
-    test_std_mt19937_leap       <std::gamma_distribution<double>, GAMMA>();
-    test_boost_mt19937_leap     <boost::random::gamma_distribution<double>, GAMMA>();
-    test_random123              <boost::random::gamma_distribution<double>, GAMMA>();
+    print_to_file (test_trng_yarn2             <trng::gamma_dist<double>, GAMMA >()                    , ff, p);   
+    print_to_file (test_pcg32                  <std::gamma_distribution<double>, GAMMA>()              , ff, p);
+    print_to_file (test_std_mt19937_leap       <std::gamma_distribution<double>, GAMMA>()              , ff, p);
+    print_to_file (test_boost_mt19937_leap     <boost::random::gamma_distribution<double>, GAMMA>()    , ff, p);
+    print_to_file (test_random123              <boost::random::gamma_distribution<double>, GAMMA>()    , ff, p);
     cout << "\n";
+    if (p) ff.close();
   
+    if (p) ff.open("Exponential.dat");
     cout << "Exponential : " << "\n";
-    test_trng_yarn2             <trng::exponential_dist<double>, EXPONENTIAL >(); 
-    test_pcg32                  <std::exponential_distribution<double>, EXPONENTIAL>();
-    test_std_mt19937_leap       <std::exponential_distribution<double>, EXPONENTIAL>();
-    test_boost_mt19937_leap     <boost::random::exponential_distribution<double>, EXPONENTIAL>();
-    test_random123              <boost::random::exponential_distribution<double>, EXPONENTIAL>();
+    print_to_file (test_trng_yarn2             <trng::exponential_dist<double>, EXPONENTIAL >()                   , ff, p);     
+    print_to_file (test_pcg32                  <std::exponential_distribution<double>, EXPONENTIAL>()             , ff, p);
+    print_to_file (test_std_mt19937_leap       <std::exponential_distribution<double>, EXPONENTIAL>()             , ff, p);
+    print_to_file (test_boost_mt19937_leap     <boost::random::exponential_distribution<double>, EXPONENTIAL>()   , ff, p);
+    print_to_file (test_random123              <boost::random::exponential_distribution<double>, EXPONENTIAL>()   , ff, p);
     cout << "\n";
+    if (p) ff.close();
   
+    if (p) ff.open("Poisson.dat");
     cout << "Poisson : " << "\n";
-    test_trng_yarn2             <trng::poisson_dist, POISSON >(); 
-    test_pcg32                  <std::poisson_distribution<int>, POISSON>();
-    test_std_mt19937_leap       <std::poisson_distribution<int>, POISSON>();
-    test_boost_mt19937_leap     <boost::random::poisson_distribution<int>, POISSON>();
-    test_random123              <boost::random::poisson_distribution<int>, POISSON>();
+    print_to_file (test_trng_yarn2             <trng::poisson_dist, POISSON >()                        , ff, p);        
+    print_to_file (test_pcg32                  <std::poisson_distribution<int>, POISSON>()             , ff, p);
+    print_to_file (test_std_mt19937_leap       <std::poisson_distribution<int>, POISSON>()             , ff, p);
+    print_to_file (test_boost_mt19937_leap     <boost::random::poisson_distribution<int>, POISSON>()   , ff, p);
+    print_to_file (test_random123              <boost::random::poisson_distribution<int>, POISSON>()   , ff, p);
     cout << "\n";
+    if (p) ff.close();
   
+    if (p) ff.open("Bernoulli.dat");
     cout << "Bernoulli : " << "\n";
-    test_trng_yarn2             <trng::bernoulli_dist<double>, BERNOULLI >(); 
-    test_pcg32                  <std::bernoulli_distribution, BERNOULLI>();
-    test_std_mt19937_leap       <std::bernoulli_distribution, BERNOULLI>();
-    test_boost_mt19937_leap     <boost::random::bernoulli_distribution<double>, BERNOULLI>();
-    test_random123              <boost::random::bernoulli_distribution<double>, BERNOULLI>();
+    print_to_file (test_trng_yarn2             <trng::bernoulli_dist<double>, BERNOULLI >()                 , ff, p);
+    print_to_file (test_pcg32                  <std::bernoulli_distribution, BERNOULLI>()                   , ff, p);
+    print_to_file (test_std_mt19937_leap       <std::bernoulli_distribution, BERNOULLI>()                   , ff, p);
+    print_to_file (test_boost_mt19937_leap     <boost::random::bernoulli_distribution<double>, BERNOULLI>() , ff, p);
+    print_to_file (test_random123              <boost::random::bernoulli_distribution<double>, BERNOULLI>() , ff, p);
     cout << "\n";
+    if (p) ff.close();
 
   }
 
